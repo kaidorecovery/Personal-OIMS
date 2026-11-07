@@ -4616,6 +4616,75 @@ window.onerror = function (msg, src, line, col) {
     return best;
   }
 
+  // ---- the Kaido app: its cold dips, sauna and breathwork tick habits here ----
+  // The Kaido app keeps its sessions in this browser under its own name (the same address, kaidorecovery.github.io).
+  // Personal iOMS only reads them: it never writes to the Kaido app.
+  var KAIDO_KEY = 'kaido-app-demo-v1';
+  var KAIDO_KINDS = [
+    { k: 'cold', id: 'k-cold', name: 'Cold dip', re: /cold|plunge|ice ?bath|\bdip\b/i },
+    { k: 'heat', id: 'k-heat', name: 'Sauna', re: /sauna|heat/i },
+    { k: 'breath', id: 'k-breath', name: 'Breathwork', re: /breath/i }
+  ];
+  var kaidoLink = null;   // once linked: { at, map: { cold: habit id, heat: habit id, breath: habit id } }
+  function kaidoSessions() {
+    try {
+      var o = JSON.parse(window.localStorage.getItem(KAIDO_KEY) || 'null');
+      if (!o || !Array.isArray(o.sessions)) return null;
+      return o.sessions.filter(function (x) { return x && /^\d{4}-\d{2}-\d{2}$/.test(x.day || ''); });
+    } catch (e) { return null; }
+  }
+  function kaidoKinds(x) {
+    var k = [];
+    if (x.kind === 'cold' || x.kind === 'circuit') k.push('cold');
+    if (x.kind === 'heat' || x.kind === 'circuit') k.push('heat');
+    if (x.kind === 'breathe') k.push('breath');
+    return k;
+  }
+  function kaidoHabit(k) {
+    var id = kaidoLink && kaidoLink.map ? kaidoLink.map[k] : null;
+    return id ? habits.filter(function (h) { return h.id === id; })[0] || null : null;
+  }
+  // tick the linked habits on every day the Kaido app has a session; returns how many new ticks
+  function kaidoSync() {
+    if (!kaidoLink || !kaidoLink.map) return 0;
+    var ss = kaidoSessions(); if (!ss) return 0;
+    var n = 0;
+    ss.forEach(function (x) {
+      kaidoKinds(x).forEach(function (k) {
+        var h = kaidoHabit(k); if (!h) return;
+        var t = getTicks(x.day); if (!t[h.id]) { t[h.id] = true; n++; }
+      });
+    });
+    return n;
+  }
+  // a habit you already keep (an ice bath, a sauna, breathwork) is used; otherwise one is added
+  function kaidoLinkNow() {
+    var map = {};
+    KAIDO_KINDS.forEach(function (x) {
+      var h = habits.filter(function (y) { return y.id === x.id; })[0] || habits.filter(function (y) { return x.re.test(y.name || ''); })[0];
+      if (!h) { h = { id: x.id, name: x.name }; habits.push(h); }
+      map[x.k] = h.id;
+    });
+    kaidoLink = { at: Date.now(), map: map };
+    kaidoSync(); save(); render();
+  }
+  function kaidoCard() {
+    var ss = kaidoSessions();
+    if (!kaidoLink && !ss) return '';
+    var n = ss ? ss.length : 0, nTxt = n + (n === 1 ? ' session' : ' sessions');
+    var last = n ? ss.map(function (x) { return x.day; }).sort().pop() : '';
+    var lastTxt = last ? new Date(+last.slice(0, 4), +last.slice(5, 7) - 1, +last.slice(8, 10)).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    var names = KAIDO_KINDS.map(function (x) { var h = kaidoHabit(x.k); return h ? h.name : ''; }).filter(Boolean);
+    var body = !kaidoLink
+      ? 'The Kaido app is on this phone' + (n ? ', with ' + nTxt : '') + '. Link it and your cold dips, sauna and breathwork tick themselves here as habits, each time you log one there.'
+      : ss ? 'Linked. ' + names.join(', ') + ' tick themselves here each time you log a session in the Kaido app: ' + nTxt + ' so far' + (last ? ', the last on ' + lastTxt : '') + '.'
+      : 'Linked, but the Kaido app isn\u2019t in this browser, so nothing new comes in here. Open both in the same browser on your phone.';
+    var sub = kaidoLink ? (ss ? nTxt + ' · linked' : 'Linked') : 'Not linked';
+    return '<div class="extras kaidolink"><div class="exhead">The Kaido app <span class="dsecsub">' + sub + '</span></div><div class="note">' + esc(body) + '</div>'
+      + (kaidoLink ? '<button class="btn addex" id="kaidoOff">Unlink the Kaido app</button>' : '<button class="btn addex" id="kaidoOn">Link the Kaido app</button>')
+      + '<div class="note" style="margin-top:6px">Personal iOMS only reads the Kaido app; it never changes it.</div></div>';
+  }
+
   var hbSel = null;   // day selected on the habit board ('YYYY-MM-DD')
   function hbDayScore(k) {
     if (!habits.length) return 0;
@@ -4877,7 +4946,7 @@ window.onerror = function (msg, src, line, col) {
     if (!sl.length) sRows = '<div class="exempty">Nothing logged for this day</div>';
 
     var elapsed = list.filter(function (x) { return x <= today; }).length;
-    return '<div class="dcard wide hbwrap">' + habitBoard(false) + '</div><div class="dsec">Full year</div>'
+    return '<div class="dcard wide hbwrap">' + habitBoard(false) + '</div>' + kaidoCard() + '<div class="dsec">Full year</div>'
       + '<div class="navbar"><button class="btn" id="prevY">‹</button>'
       + '<div class="mo">' + yr + '</div>'
       + '<button class="btn" id="nextY">›</button></div>'
@@ -13287,6 +13356,10 @@ window.onerror = function (msg, src, line, col) {
         save(); render();
       };
     }
+    var kOn = document.getElementById('kaidoOn');
+    if (kOn) kOn.onclick = function () { kaidoLinkNow(); };
+    var kOff = document.getElementById('kaidoOff');
+    if (kOff) kOff.onclick = function () { if (!confirm('Unlink the Kaido app? The days already ticked here stay.')) return; kaidoLink = null; save(); render(); };
     var addH = document.getElementById('addHabit');
     if (addH) addH.onclick = function () {
       habits.push({ id: 'h' + Date.now(), name: '' });
@@ -13355,7 +13428,7 @@ window.onerror = function (msg, src, line, col) {
 
   // ---- storage ----
   function payload() {
-    return JSON.stringify({ xf: xfers, xr: idrRec, ld: leads, wr: weekRev, icl: invClients, flt: flights2, gl: goals, rf: reflections, wx: weather, shp: shop, nt: notes, rfix: rateFixed, sa: savedAt, d: days, e: extras, r: dayRate, b: biz, p: plan, psun: planSun, ps: planStart, hb: habits, hk: ticks, sp: spend, fx: fixed, bf: bizFixed, bo: bizOnce, fl: flightsLog, g: goal, eg: earnGoal, pk: packages, dpk: defaultPkg, tvh: travelDayHours, hero: heroHabit, tv: travel, loc: locations, mr: mileRate, fs: fuelSettings, tax: taxPct, mv: moves, bopen: bizOpening, bopenm: bizOpenMonth, msn: seenMilestones, ib: invBuckets, lr: lineRoute, pr: pkgRoute, inn: invNums, ev: events, td: todos, md: mood, nut: nutrition, jr: journal, ml: meals, fc: focus, gm: garmin, tr2: training, ptg: proteinTarget, xvat: xeroVat, dtg: dietTargets, dty: dayType, lbk: lastBackup, plk2: planLock, pls: planSeeded, fd: foods, flg: foodLog, hv: homeView, st: settings, ct: countries, pon: patOn, poff: patOff, psm: planSunMode, pfare: planFare, kd: kaido, dbt: debts, ast: assets, prp: props, stk: stock, sfx: stockFx, csh: cash, plk: propLock, seedv: seedv });
+    return JSON.stringify({ xf: xfers, xr: idrRec, ld: leads, wr: weekRev, icl: invClients, flt: flights2, gl: goals, rf: reflections, wx: weather, shp: shop, nt: notes, rfix: rateFixed, sa: savedAt, d: days, e: extras, r: dayRate, b: biz, p: plan, psun: planSun, ps: planStart, hb: habits, hk: ticks, kl: kaidoLink, sp: spend, fx: fixed, bf: bizFixed, bo: bizOnce, fl: flightsLog, g: goal, eg: earnGoal, pk: packages, dpk: defaultPkg, tvh: travelDayHours, hero: heroHabit, tv: travel, loc: locations, mr: mileRate, fs: fuelSettings, tax: taxPct, mv: moves, bopen: bizOpening, bopenm: bizOpenMonth, msn: seenMilestones, ib: invBuckets, lr: lineRoute, pr: pkgRoute, inn: invNums, ev: events, td: todos, md: mood, nut: nutrition, jr: journal, ml: meals, fc: focus, gm: garmin, tr2: training, ptg: proteinTarget, xvat: xeroVat, dtg: dietTargets, dty: dayType, lbk: lastBackup, plk2: planLock, pls: planSeeded, fd: foods, flg: foodLog, hv: homeView, st: settings, ct: countries, pon: patOn, poff: patOff, psm: planSunMode, pfare: planFare, kd: kaido, dbt: debts, ast: assets, prp: props, stk: stock, sfx: stockFx, csh: cash, plk: propLock, seedv: seedv });
   }
   var lastSaved = null, savedAt = 0, loadedStamp = 0, booted = false;
   var storageOK = (function () {
@@ -13399,6 +13472,7 @@ window.onerror = function (msg, src, line, col) {
       if (o.ps) planStart = o.ps;
       if (o.hb) habits = o.hb;
       if (o.hk) ticks = o.hk;
+      if (o.kl && o.kl.map) kaidoLink = o.kl;
       if (o.sp) spend = o.sp;
       if (o.fx) fixed = o.fx;
       if (o.bf) bizFixed = o.bf;
@@ -13500,6 +13574,7 @@ window.onerror = function (msg, src, line, col) {
       if (o.psm) planSunMode = o.psm;
       if (o.pfare !== undefined) planFare = o.pfare;
       if (o.poff !== undefined) patOff = o.poff;
+      if (booted && kaidoSync()) setTimeout(save, 0);
       render();
     } catch (e) {}
   }
@@ -13530,6 +13605,11 @@ window.onerror = function (msg, src, line, col) {
     setTimeout(function () { tryLoad(attempt + 1); }, 60);
   }
   tryLoad(0);
+
+  // a session logged in the Kaido app (another tab, or on coming back to Personal iOMS) ticks its habit here
+  function kaidoLater() { if (booted && kaidoSync()) { save(); render(); } }
+  window.addEventListener('storage', function (e) { if (e.key === KAIDO_KEY) kaidoLater(); });
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') kaidoLater(); });
 
   // ---------- keep a copy on your Claude account ----------
   var cloud = { state: 'off', at: null, db: null, uid: null, timer: null, ready: false, n: 0 };
